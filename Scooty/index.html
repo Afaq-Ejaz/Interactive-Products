@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CM Punjab E-Scooty — 3D Interactive Showcase</title>
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <!-- Three.js & OrbitControls via CDN -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <div id="canvas-container"></div>
+
+  <!-- Header -->
+  <div class="hud-header">
+    <span class="badge">CM Punjab Green Initiative • Phase 2</span>
+    <h1>Electric Scooty (2026 Model)</h1>
+    <p>Interactive 3D Digital Twin • Click spec cards to inspect</p>
+  </div>
+
+  <!-- Right Spec Cards -->
+  <div class="specs-panel">
+    <div class="telemetry-box">
+      <div class="speed-readout" id="speedValue">00</div>
+      <div class="speed-unit">KM/H • DIGITAL DISPLAY</div>
+    </div>
+
+    <div class="spec-card" data-cam="battery">
+      <div class="spec-title">Battery Pack</div>
+      <div class="spec-value">
+        72V, 30Ah
+        <span class="spec-sub">LiFePO4</span>
+      </div>
+    </div>
+
+    <div class="spec-card" data-cam="motor">
+      <div class="spec-title">Rear Drive</div>
+      <div class="spec-value">
+        1000W Motor
+        <span class="spec-sub">BLDC Hub</span>
+      </div>
+    </div>
+
+    <div class="spec-card" data-cam="front">
+      <div class="spec-title">Suspension & Brakes</div>
+      <div class="spec-value">
+        Hydraulic
+        <span class="spec-sub">Front Disc</span>
+      </div>
+    </div>
+
+    <div class="spec-card" data-cam="cockpit">
+      <div class="spec-title">Controller & Dash</div>
+      <div class="spec-value">
+        12-Tube
+        <span class="spec-sub">LED Cockpit</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="hint">Left-Click + Drag to Rotate • Scroll to Zoom • Right-Click to Pan</div>
+
+  <!-- Bottom Control Dock -->
+  <div class="control-dock">
+    <div class="color-group">
+      <span class="color-label">Color:</span>
+      <div class="swatch swatch-black active" id="colorBlack" title="Midnight Black"></div>
+      <div class="swatch swatch-pink" id="colorPink" title="Pastel Pink"></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <button class="btn active" id="btnHeadlight">LED Headlamp: ON</button>
+    <button class="btn" id="btnThrottle">Run 1000W Motor</button>
+    <button class="btn active" id="btnRotate">Auto-Turntable</button>
+    <button class="btn" id="btnResetCam">Reset View</button>
+  </div>
+
+  <!--
+    ═══════════════════════════════════════════════════════════════
+    APPLICATION SCRIPT
+    Inline module to work from file:// protocol.
+    Source-of-truth architecture lives in js/ folder.
+    ═══════════════════════════════════════════════════════════════
+  -->
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    /* ═══════════════════════════════════════════════════════════════
+     *  MODULE 1: CONFIG — js/config.js
+     *  All shared constants, color palettes, camera presets, tuning.
+     * ═══════════════════════════════════════════════════════════════ */
+
+    const COLORS = {
+      bodyBlack: 0x141619,
+      bodyPink: 0xf48fb1,
+      accentGreen: 0x00e676,
+      accentPinkBody: 0xffffff,
+      accentPinkEmissive: 0xf8bbd0,
+      turntablePink: 0xf48fb1,
+      fog: 0x090d12,
+      floor: 0x0b0f15,
+      gridMain: 0x1e293b,
+      gridSub: 0x111827,
+      ambient: 0xdbeafe,
+      keyLight: 0xffffff,
+      rimGreen: 0x00e676,
+      rimBlue: 0x38bdf8,
+      darkTrim: 0x1c1f24,
+      seatLeather: 0x18191c,
+      chrome: 0xd4d8dd,
+      tire: 0x121316,
+      headlampWhite: 0xffffff,
+      headlampEmissive: 0xe0f2fe,
+      tailRed: 0xff1744,
+      screenGreen: 0x00e676,
+      spotLight: 0xe0f2fe,
+    };
+
+    const CAMERA_CONFIG = {
+      fov: 42, near: 0.1, far: 100,
+      position: new THREE.Vector3(4.2, 2.3, 4.6),
+      controlsTarget: new THREE.Vector3(0, 0.85, 0),
+      dampingFactor: 0.05,
+      maxPolarAngle: Math.PI / 2 - 0.02,
+      minDistance: 2.0, maxDistance: 11.0,
+      autoRotateSpeed: 1.0,
+    };
+
+    const CAMERA_PRESETS = {
+      battery: { pos: new THREE.Vector3(-0.2, 1.25, 2.3), target: new THREE.Vector3(-0.1, 0.55, 0) },
+      motor:   { pos: new THREE.Vector3(1.5, 0.95, 2.1),  target: new THREE.Vector3(0.95, 0.47, 0) },
+      front:   { pos: new THREE.Vector3(-2.1, 1.0, 1.9),  target: new THREE.Vector3(-0.95, 0.65, 0) },
+      cockpit: { pos: new THREE.Vector3(0.4, 2.05, 1.4),  target: new THREE.Vector3(-0.56, 1.52, 0) },
+      reset:   { pos: new THREE.Vector3(4.2, 2.3, 4.6),   target: new THREE.Vector3(0, 0.85, 0) },
+    };
+
+    const RENDERER_CONFIG = {
+      antialias: true, powerPreference: 'high-performance',
+      maxPixelRatio: 2, shadowMapSize: 2048,
+      toneMapping: THREE.ACESFilmicToneMapping,
+      toneMappingExposure: 1.15,
+    };
+
+    const ANIMATION = {
+      maxSpeed: 55, speedRampFactor: 3.5,
+      wheelSpeedFactor: 16, cameraTweenSpeed: 5,
+      cameraTweenThreshold: 0.03,
+    };
+
+    const HEADLIGHT = {
+      onHeadlamp: 2.5, offHeadlamp: 0.05,
+      onTaillight: 1.8, offTaillight: 0.1,
+    };
+
+    /* ═══════════════════════════════════════════════════════════════
+     *  MODULE 2: SCENE — js/scene.js
+     *  Scene, camera, renderer, controls, studio lighting, floor.
+     * ═══════════════════════════════════════════════════════════════ */
+
+    function createScene(container) {
+      const scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(COLORS.fog, 0.035);
+
+      const camera = new THREE.PerspectiveCamera(
+        CAMERA_CONFIG.fov, window.innerWidth / window.innerHeight,
+        CAMERA_CONFIG.near, CAMERA_CONFIG.far
+      );
+      camera.position.copy(CAMERA_CONFIG.position);
+
+      const renderer = new THREE.WebGLRenderer({
+        antialias: RENDERER_CONFIG.antialias,
+        powerPreference: RENDERER_CONFIG.powerPreference,
+      });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, RENDERER_CONFIG.maxPixelRatio));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = RENDERER_CONFIG.toneMapping;
+      renderer.toneMappingExposure = RENDERER_CONFIG.toneMappingExposure;
+      container.appendChild(renderer.domElement);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = CAMERA_CONFIG.dampingFactor;
+      controls.target.copy(CAMERA_CONFIG.controlsTarget);
+      controls.maxPolarAngle = CAMERA_CONFIG.maxPolarAngle;
+      controls.minDistance = CAMERA_CONFIG.minDistance;
+      controls.maxDistance = CAMERA_CONFIG.maxDistance;
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = CAMERA_CONFIG.autoRotateSpeed;
+
+      // Studio Lighting
+      scene.add(new THREE.AmbientLight(COLORS.ambient, 0.65));
+
+      const keyLight = new THREE.DirectionalLight(COLORS.keyLight, 2.2);
+      keyLight.position.set(5, 8, 5);
+      keyLight.castShadow = true;
+      keyLight.shadow.mapSize.set(RENDERER_CONFIG.shadowMapSize, RENDERER_CONFIG.shadowMapSize);
+      keyLight.shadow.camera.near = 0.5;
+      keyLight.shadow.camera.far = 25;
+      const d = 4;
+      keyLight.shadow.camera.left = -d;
+      keyLight.shadow.camera.right = d;
+      keyLight.shadow.camera.top = d;
+      keyLight.shadow.camera.bottom = -d;
+      keyLight.shadow.bias = -0.0005;
+      scene.add(keyLight);
+
+      const rimLight1 = new THREE.DirectionalLight(COLORS.rimGreen, 1.4);
+      rimLight1.position.set(-6, 4, -5);
+      scene.add(rimLight1);
+
+      const rimLight2 = new THREE.DirectionalLight(COLORS.rimBlue, 1.0);
+      rimLight2.position.set(0, 5, -6);
+      scene.add(rimLight2);
+
+      // Showroom Floor
+      const floorGeo = new THREE.CircleGeometry(18, 64);
+      const floorMat = new THREE.MeshStandardMaterial({ color: COLORS.floor, roughness: 0.35, metalness: 0.4 });
+      const floor = new THREE.Mesh(floorGeo, floorMat);
+      floor.rotation.x = -Math.PI / 2;
+      floor.receiveShadow = true;
+      scene.add(floor);
+
+      const ringGeo = new THREE.RingGeometry(2.15, 2.22, 96);
+      const ringMat = new THREE.MeshBasicMaterial({ color: COLORS.accentGreen, side: THREE.DoubleSide });
+      const turntableRing = new THREE.Mesh(ringGeo, ringMat);
+      turntableRing.rotation.x = -Math.PI / 2;
+      turntableRing.position.y = 0.005;
+      scene.add(turntableRing);
+
+      const grid = new THREE.GridHelper(24, 48, COLORS.gridMain, COLORS.gridSub);
+      grid.position.y = 0.002;
+      scene.add(grid);
+
+      return { scene, camera, renderer, controls, turntableRing };
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+     *  MODULE 3: MATERIALS — js/materials.js
+     *  All PBR materials and procedural decal texture.
+     * ═══════════════════════════════════════════════════════════════ */
+
+    function createSideDecalTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#141619';
+      ctx.fillRect(0, 0, 512, 256);
+
+      ctx.fillStyle = '#00e676';
+      ctx.fillRect(20, 210, 472, 16);
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(390, 110, 55, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = '#00e676';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText('GOVT OF', 342, 105);
+      ctx.fillText('PUNJAB', 345, 132);
+
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(150, 75, 22, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText('CM GREEN INITIATIVE', 45, 135);
+      ctx.fillStyle = '#9ba8b8';
+      ctx.font = '18px sans-serif';
+      ctx.fillText('1000W BLDC • 72V LiFePO4', 45, 168);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.needsUpdate = true;
+      return texture;
+    }
+
+    function createMaterials() {
+      const bodyMat = new THREE.MeshPhysicalMaterial({
+        color: COLORS.bodyBlack, roughness: 0.28, metalness: 0.35,
+        clearcoat: 0.65, clearcoatRoughness: 0.2,
+      });
+      const accentMat = new THREE.MeshStandardMaterial({
+        color: COLORS.accentGreen, emissive: COLORS.accentGreen,
+        emissiveIntensity: 0.25, roughness: 0.3,
+      });
+      const darkTrimMat = new THREE.MeshStandardMaterial({
+        color: COLORS.darkTrim, roughness: 0.7, metalness: 0.2,
+      });
+      const seatLeatherMat = new THREE.MeshStandardMaterial({
+        color: COLORS.seatLeather, roughness: 0.65, metalness: 0.05,
+      });
+      const chromeMat = new THREE.MeshStandardMaterial({
+        color: COLORS.chrome, roughness: 0.15, metalness: 0.92,
+      });
+      const tireMat = new THREE.MeshStandardMaterial({
+        color: COLORS.tire, roughness: 0.88, metalness: 0.05,
+      });
+      const headlampGlowMat = new THREE.MeshStandardMaterial({
+        color: COLORS.headlampWhite, emissive: COLORS.headlampEmissive,
+        emissiveIntensity: 2.5,
+      });
+      const tailLightMat = new THREE.MeshStandardMaterial({
+        color: COLORS.tailRed, emissive: COLORS.tailRed,
+        emissiveIntensity: 1.8,
+      });
+      const sideDecalMat = new THREE.MeshStandardMaterial({
+        map: createSideDecalTexture(), roughness: 0.35, metalness: 0.2,
+      });
+
+      return { bodyMat, accentMat, darkTrimMat, seatLeatherMat, chromeMat, tireMat, headlampGlowMat, tailLightMat, sideDecalMat };
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+     *  MODULE 4: SCOOTY MODEL — js/scootyModel.js
+     *  Complete 3D model with shared geometries.
+     * ═══════════════════════════════════════════════════════════════ */
+
+    function enableShadow(mesh) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    function createWheelAssembly(materials, isRear) {
+      const { tireMat, darkTrimMat, chromeMat } = materials;
+      const wheelGroup = new THREE.Group();
+
+      const tireGeo = new THREE.TorusGeometry(0.34, 0.13, 28, 56);
+      wheelGroup.add(enableShadow(new THREE.Mesh(tireGeo, tireMat)));
+
+      const rimGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.14, 32);
+      rimGeo.rotateX(Math.PI / 2);
+      wheelGroup.add(enableShadow(new THREE.Mesh(rimGeo, darkTrimMat)));
+
+      const lipGeo = new THREE.TorusGeometry(0.24, 0.015, 16, 48);
+      const lipLeft = new THREE.Mesh(lipGeo, chromeMat);
+      lipLeft.position.z = 0.07;
+      const lipRight = lipLeft.clone();
+      lipRight.position.z = -0.07;
+      wheelGroup.add(lipLeft, lipRight);
+
+      if (isRear) {
+        const motorGeo = new THREE.CylinderGeometry(0.19, 0.19, 0.18, 32);
+        motorGeo.rotateX(Math.PI / 2);
+        wheelGroup.add(enableShadow(new THREE.Mesh(motorGeo, chromeMat)));
+      } else {
+        const spokeGeo = new THREE.BoxGeometry(0.04, 0.22, 0.04);
+        for (let i = 0; i < 5; i++) {
+          const spoke = new THREE.Mesh(spokeGeo, chromeMat);
+          const angle = (i * Math.PI * 2) / 5;
+          spoke.position.set(Math.cos(angle) * 0.11, Math.sin(angle) * 0.11, 0);
+          spoke.rotation.z = angle + Math.PI / 2;
+          wheelGroup.add(spoke);
+        }
+        const discGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.012, 32);
+        discGeo.rotateX(Math.PI / 2);
+        const disc = new THREE.Mesh(discGeo, chromeMat);
+        disc.position.z = 0.09;
+        wheelGroup.add(disc);
+      }
+
+      return wheelGroup;
+    }
+
+    function buildForkAssembly(parent, materials) {
+      const { darkTrimMat, chromeMat, bodyMat } = materials;
+      const forkAngle = -0.34;
+
+      const lowerForkGeo = new THREE.CylinderGeometry(0.036, 0.032, 0.52, 20);
+      const upperStanchionGeo = new THREE.CylinderGeometry(0.026, 0.026, 0.45, 20);
+
+      [-0.14, 0.14].forEach((zOffset) => {
+        const lowerFork = enableShadow(new THREE.Mesh(lowerForkGeo, darkTrimMat));
+        lowerFork.position.set(-0.90, 0.68, zOffset);
+        lowerFork.rotation.z = forkAngle;
+        parent.add(lowerFork);
+
+        const upperStanchion = enableShadow(new THREE.Mesh(upperStanchionGeo, chromeMat));
+        upperStanchion.position.set(-0.77, 1.02, zOffset);
+        upperStanchion.rotation.z = forkAngle;
+        parent.add(upperStanchion);
+      });
+
+      const fenderGeo = new THREE.CylinderGeometry(0.49, 0.49, 0.28, 32, 1, true, -Math.PI * 0.35, Math.PI * 0.65);
+      fenderGeo.rotateX(Math.PI / 2);
+      const frontFender = enableShadow(new THREE.Mesh(fenderGeo, bodyMat));
+      frontFender.position.set(-0.98, 0.47, 0);
+      parent.add(frontFender);
+    }
+
+    function buildApronAssembly(parent, materials) {
+      const { bodyMat, darkTrimMat, chromeMat, headlampGlowMat, accentMat } = materials;
+      const forkAngle = -0.34;
+
+      const apronGroup = new THREE.Group();
+      apronGroup.position.set(-0.74, 1.08, 0);
+      apronGroup.rotation.z = forkAngle;
+
+      apronGroup.add(enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.86, 0.52), bodyMat)));
+
+      const innerShield = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.82, 0.48), darkTrimMat));
+      innerShield.position.set(0.16, -0.02, 0);
+      apronGroup.add(innerShield);
+
+      const hook = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.04), chromeMat);
+      hook.position.set(0.20, 0.18, 0);
+      apronGroup.add(hook);
+
+      const bezel = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.17, 0.38), chromeMat);
+      bezel.position.set(-0.15, -0.06, 0);
+      apronGroup.add(bezel);
+
+      const headlampMesh = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.32), headlampGlowMat);
+      headlampMesh.position.set(-0.155, -0.06, 0);
+      apronGroup.add(headlampMesh);
+
+      const noseDecal = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.22, 0.16), accentMat);
+      noseDecal.position.set(-0.165, 0.18, 0);
+      apronGroup.add(noseDecal);
+
+      parent.add(apronGroup);
+
+      const headlightSpot = new THREE.SpotLight(COLORS.spotLight, 5, 14, Math.PI / 5, 0.45, 1.5);
+      headlightSpot.position.set(-0.92, 1.02, 0);
+      headlightSpot.target.position.set(-5.5, 0.1, 0);
+      headlightSpot.castShadow = true;
+      parent.add(headlightSpot);
+      parent.add(headlightSpot.target);
+
+      return headlightSpot;
+    }
+
+    function buildFloorboard(parent, materials) {
+      const { bodyMat, darkTrimMat, accentMat } = materials;
+
+      const deck = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 0.52), bodyMat));
+      deck.position.set(-0.12, 0.52, 0);
+      parent.add(deck);
+
+      const footMat = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.02, 0.46), darkTrimMat));
+      footMat.position.set(-0.12, 0.62, 0);
+      parent.add(footMat);
+
+      const stripGeo = new THREE.BoxGeometry(0.75, 0.055, 0.015);
+      [-0.265, 0.265].forEach((zPos) => {
+        const strip = new THREE.Mesh(stripGeo, accentMat);
+        strip.position.set(-0.08, 0.52, zPos);
+        parent.add(strip);
+      });
+
+      const kickstand = enableShadow(new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.012, 0.42, 12), darkTrimMat));
+      kickstand.position.set(-0.05, 0.24, 0.28);
+      kickstand.rotation.x = 0.42;
+      kickstand.rotation.z = -0.15;
+      parent.add(kickstand);
+    }
+
+    function buildRearBody(parent, materials) {
+      const { bodyMat, chromeMat, tailLightMat, sideDecalMat } = materials;
+
+      const riser = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.46, 0.52), bodyMat));
+      riser.position.set(0.55, 0.80, 0);
+      parent.add(riser);
+
+      const panelGeo = new THREE.PlaneGeometry(0.68, 0.34);
+      [-0.266, 0.266].forEach((zPos) => {
+        const panel = new THREE.Mesh(panelGeo, sideDecalMat);
+        panel.position.set(0.60, 0.84, zPos);
+        if (zPos < 0) panel.rotation.y = Math.PI;
+        parent.add(panel);
+      });
+
+      const armGeo = new THREE.BoxGeometry(0.52, 0.11, 0.05);
+      const shockGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.36, 16);
+      [-0.22, 0.22].forEach((zPos) => {
+        const swingarm = enableShadow(new THREE.Mesh(armGeo, chromeMat));
+        swingarm.position.set(0.72, 0.48, zPos);
+        parent.add(swingarm);
+
+        const shock = enableShadow(new THREE.Mesh(shockGeo, chromeMat));
+        shock.position.set(0.88, 0.66, zPos);
+        shock.rotation.z = 0.22;
+        parent.add(shock);
+      });
+
+      const tailLight = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 0.36), tailLightMat);
+      tailLight.position.set(0.99, 0.92, 0);
+      parent.add(tailLight);
+    }
+
+    function buildSeatAssembly(parent, materials) {
+      const { seatLeatherMat, chromeMat } = materials;
+
+      const mainSeat = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.16, 0.48), seatLeatherMat));
+      mainSeat.position.set(0.52, 1.10, 0);
+      parent.add(mainSeat);
+
+      const seatNoseGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.48, 24);
+      seatNoseGeo.rotateX(Math.PI / 2);
+      const seatNose = enableShadow(new THREE.Mesh(seatNoseGeo, seatLeatherMat));
+      seatNose.position.set(0.11, 1.10, 0);
+      parent.add(seatNose);
+
+      const grabRail = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.04, 0.52), chromeMat));
+      grabRail.position.set(0.96, 1.10, 0);
+      parent.add(grabRail);
+
+      const backrestBracket = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.26, 0.14), chromeMat));
+      backrestBracket.position.set(1.06, 1.22, 0);
+      backrestBracket.rotation.z = -0.18;
+      parent.add(backrestBracket);
+
+      const backrestPad = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.20, 0.34), seatLeatherMat));
+      backrestPad.position.set(1.02, 1.36, 0);
+      backrestPad.rotation.z = -0.1;
+      parent.add(backrestPad);
+    }
+
+    function buildCockpit(parent, materials) {
+      const { darkTrimMat, seatLeatherMat, chromeMat } = materials;
+      const cockpitGroup = new THREE.Group();
+      cockpitGroup.position.set(-0.56, 1.56, 0);
+
+      const barGeo = new THREE.CylinderGeometry(0.022, 0.022, 0.78, 20);
+      barGeo.rotateX(Math.PI / 2);
+      cockpitGroup.add(enableShadow(new THREE.Mesh(barGeo, darkTrimMat)));
+
+      const gripGeo = new THREE.CylinderGeometry(0.028, 0.028, 0.16, 20);
+      gripGeo.rotateX(Math.PI / 2);
+      const leverGeo = new THREE.BoxGeometry(0.02, 0.015, 0.13);
+      const stemGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.24, 12);
+      const mirrorHousingGeo = new THREE.BoxGeometry(0.04, 0.09, 0.14);
+
+      [-0.36, 0.36].forEach((zPos) => {
+        const grip = new THREE.Mesh(gripGeo, seatLeatherMat);
+        grip.position.set(0, 0, zPos);
+        cockpitGroup.add(grip);
+
+        const lever = new THREE.Mesh(leverGeo, chromeMat);
+        lever.position.set(-0.05, -0.01, zPos * 0.92);
+        cockpitGroup.add(lever);
+
+        const stem = new THREE.Mesh(stemGeo, darkTrimMat);
+        stem.position.set(0, 0.12, zPos * 0.78);
+        stem.rotation.x = zPos > 0 ? 0.35 : -0.35;
+        cockpitGroup.add(stem);
+
+        const mirrorHousing = enableShadow(new THREE.Mesh(mirrorHousingGeo, darkTrimMat));
+        mirrorHousing.position.set(0.02, 0.24, zPos * 0.95);
+        cockpitGroup.add(mirrorHousing);
+      });
+
+      const dashHousing = enableShadow(new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.26), darkTrimMat));
+      dashHousing.position.set(-0.02, 0.05, 0);
+      dashHousing.rotation.z = -0.45;
+      cockpitGroup.add(dashHousing);
+
+      const screenMat = new THREE.MeshBasicMaterial({ color: COLORS.screenGreen });
+      const dashScreen = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.22), screenMat);
+      dashScreen.position.set(0.04, 0.09, 0);
+      dashScreen.rotation.y = Math.PI / 2;
+      dashScreen.rotation.x = -0.45;
+      cockpitGroup.add(dashScreen);
+
+      parent.add(cockpitGroup);
+    }
+
+    function buildScootyModel(scene, materials) {
+      const scooty = new THREE.Group();
+      scene.add(scooty);
+
+      const frontWheel = createWheelAssembly(materials, false);
+      frontWheel.position.set(-0.98, 0.47, 0);
+      scooty.add(frontWheel);
+
+      const rearWheel = createWheelAssembly(materials, true);
+      rearWheel.position.set(0.95, 0.47, 0);
+      scooty.add(rearWheel);
+
+      const caliper = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.06), materials.accentMat);
+      caliper.position.set(-0.85, 0.55, 0.11);
+      scooty.add(caliper);
+
+      buildForkAssembly(scooty, materials);
+      const headlightSpot = buildApronAssembly(scooty, materials);
+      buildFloorboard(scooty, materials);
+      buildRearBody(scooty, materials);
+      buildSeatAssembly(scooty, materials);
+      buildCockpit(scooty, materials);
+
+      return { scooty, frontWheel, rearWheel, headlightSpot };
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+     *  MODULE 5: UI — js/ui.js
+     *  Named event handlers for all interactive controls.
+     * ═══════════════════════════════════════════════════════════════ */
+
+    function initUI({ materials, turntableRing, headlightSpot, controls, state, rendererDom }) {
+      const { bodyMat, accentMat, headlampGlowMat, tailLightMat } = materials;
+
+      const btnThrottle = document.getElementById('btnThrottle');
+      const btnHeadlight = document.getElementById('btnHeadlight');
+      const btnRotate = document.getElementById('btnRotate');
+      const btnResetCam = document.getElementById('btnResetCam');
+      const colorBlack = document.getElementById('colorBlack');
+      const colorPink = document.getElementById('colorPink');
+
+      function handleColorBlack() {
+        bodyMat.color.setHex(COLORS.bodyBlack);
+        accentMat.color.setHex(COLORS.accentGreen);
+        accentMat.emissive.setHex(COLORS.accentGreen);
+        turntableRing.material.color.setHex(COLORS.accentGreen);
+        colorBlack.classList.add('active');
+        colorPink.classList.remove('active');
+      }
+
+      function handleColorPink() {
+        bodyMat.color.setHex(COLORS.bodyPink);
+        accentMat.color.setHex(COLORS.accentPinkBody);
+        accentMat.emissive.setHex(COLORS.accentPinkEmissive);
+        turntableRing.material.color.setHex(COLORS.turntablePink);
+        colorPink.classList.add('active');
+        colorBlack.classList.remove('active');
+      }
+
+      colorBlack.addEventListener('click', handleColorBlack);
+      colorPink.addEventListener('click', handleColorPink);
+
+      function handleHeadlightToggle() {
+        state.headlightOn = !state.headlightOn;
+        headlightSpot.visible = state.headlightOn;
+        headlampGlowMat.emissiveIntensity = state.headlightOn ? HEADLIGHT.onHeadlamp : HEADLIGHT.offHeadlamp;
+        tailLightMat.emissiveIntensity = state.headlightOn ? HEADLIGHT.onTaillight : HEADLIGHT.offTaillight;
+        btnHeadlight.classList.toggle('active', state.headlightOn);
+        btnHeadlight.textContent = state.headlightOn ? 'LED Headlamp: ON' : 'LED Headlamp: OFF';
+      }
+      btnHeadlight.addEventListener('click', handleHeadlightToggle);
+
+      function handleThrottleToggle() {
+        state.motorRunning = !state.motorRunning;
+        btnThrottle.classList.toggle('active', state.motorRunning);
+        btnThrottle.textContent = state.motorRunning ? '1000W Motor: RUNNING' : 'Run 1000W Motor';
+      }
+      btnThrottle.addEventListener('click', handleThrottleToggle);
+
+      function handleAutoRotate() {
+        controls.autoRotate = !controls.autoRotate;
+        btnRotate.classList.toggle('active', controls.autoRotate);
+      }
+      btnRotate.addEventListener('click', handleAutoRotate);
+
+      function handleSpecCardClick(event) {
+        const key = event.currentTarget.getAttribute('data-cam');
+        const preset = CAMERA_PRESETS[key];
+        if (preset) {
+          controls.autoRotate = false;
+          btnRotate.classList.remove('active');
+          state.targetCamPos = preset.pos;
+          state.targetControlsTarget = preset.target;
+        }
+      }
+      document.querySelectorAll('.spec-card').forEach((card) => {
+        card.addEventListener('click', handleSpecCardClick);
+      });
+
+      function handleResetCamera() {
+        state.targetCamPos = CAMERA_PRESETS.reset.pos;
+        state.targetControlsTarget = CAMERA_PRESETS.reset.target;
+      }
+      btnResetCam.addEventListener('click', handleResetCamera);
+
+      function handlePointerDown() {
+        state.targetCamPos = null;
+        state.targetControlsTarget = null;
+      }
+      rendererDom.addEventListener('pointerdown', handlePointerDown);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+     *  MODULE 6: ANIMATION — js/animation.js
+     *  Render loop with throttled DOM writes.
+     * ═══════════════════════════════════════════════════════════════ */
+
+    function startAnimationLoop({ renderer, scene, camera, controls, frontWheel, rearWheel, state }) {
+      const clock = new THREE.Clock();
+      const speedReadout = document.getElementById('speedValue');
+      let lastDisplayedSpeed = -1;
+
+      function animate() {
+        requestAnimationFrame(animate);
+        const delta = clock.getDelta();
+
+        // Speed Simulation
+        const targetSpeed = state.motorRunning ? ANIMATION.maxSpeed : 0;
+        state.currentSpeed += (targetSpeed - state.currentSpeed) * delta * ANIMATION.speedRampFactor;
+
+        // Throttled DOM write — only when value actually changes
+        const displaySpeed = Math.round(state.currentSpeed);
+        if (displaySpeed !== lastDisplayedSpeed) {
+          speedReadout.textContent = displaySpeed < 10 ? `0${displaySpeed}` : `${displaySpeed}`;
+          lastDisplayedSpeed = displaySpeed;
+        }
+
+        // Wheel Rotation
+        if (state.currentSpeed > 0.1) {
+          const angularVelocity = (state.currentSpeed / ANIMATION.maxSpeed) * ANIMATION.wheelSpeedFactor * delta;
+          frontWheel.rotation.z += angularVelocity;
+          rearWheel.rotation.z += angularVelocity;
+        }
+
+        // Camera Tweening
+        if (state.targetCamPos && state.targetControlsTarget) {
+          camera.position.lerp(state.targetCamPos, delta * ANIMATION.cameraTweenSpeed);
+          controls.target.lerp(state.targetControlsTarget, delta * ANIMATION.cameraTweenSpeed);
+          if (camera.position.distanceTo(state.targetCamPos) < ANIMATION.cameraTweenThreshold) {
+            state.targetCamPos = null;
+            state.targetControlsTarget = null;
+          }
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+      }
+
+      animate();
+    }
+
+    /* ═══════════════════════════════════════════════════════════════
+     *  MODULE 7: MAIN — js/main.js
+     *  Bootstrap — wires everything together.
+     * ═══════════════════════════════════════════════════════════════ */
+
+    const state = {
+      motorRunning: false,
+      currentSpeed: 0,
+      headlightOn: true,
+      targetCamPos: null,
+      targetControlsTarget: null,
+    };
+
+    const container = document.getElementById('canvas-container');
+    const { scene, camera, renderer, controls, turntableRing } = createScene(container);
+    const materials = createMaterials();
+    const { frontWheel, rearWheel, headlightSpot } = buildScootyModel(scene, materials);
+
+    initUI({ materials, turntableRing, headlightSpot, controls, state, rendererDom: renderer.domElement });
+    startAnimationLoop({ renderer, scene, camera, controls, frontWheel, rearWheel, state });
+
+    // Debounced Resize
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }, 100);
+    });
+  </script>
+</body>
+</html>
