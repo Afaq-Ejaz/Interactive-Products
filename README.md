@@ -4,8 +4,8 @@ Welcome to the 3D Interactive Digital Twin for the Government of Punjab's CM Gre
 
 ## 🚀 Live Demo
 
-**[Click here to view the 3D Scooty Showcase live!](https://<your-username>.github.io/<your-repo-name>/Scooty/)**
-*(Note: Replace the URL above with your actual GitHub Pages link once activated).*
+**[Click here to view the 3D Scooty Showcase live!](https://Afaq-Ejaz.github.io/Interactive-Products/Scooty/)**
+*(Make sure GitHub Pages is enabled in your repository settings).*
 
 ## About the Project
 This project is a high-performance, web-based 3D digital twin of the electric scooty (2026 Model) designed for the CM Punjab Green Initiative. It allows users to interactively explore the scooter's specifications, toggle features like the LED headlamp, and run the 1000W BLDC motor.
